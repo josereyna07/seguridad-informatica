@@ -1,160 +1,145 @@
 // ============================================
-// APP VULNERABLE - PARTE 1: SQL INJECTION
+// APLICACIÓN SEGURA - CORREGIDA
 // ============================================
 
 const express = require('express');
 const bodyParser = require('body-parser');
+const session = require('express-session');
+const validator = require('validator');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 
+// ✅ Headers de seguridad
+app.use(helmet());
+
 // Configuración básica
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-const session = require('express-session');
-
-// ============================================
-// CONFIGURACIÓN INSEGURA DE SESIÓN (VULNERABLE)
-// ============================================
+// ✅ Sesión segura
 app.use(session({
-  secret: 'secret-123',  // ❌ Secreto débil y en el código
+  secret: 'change-this-secret',
   resave: false,
-  saveUninitialized: true,
+  saveUninitialized: false,
   cookie: { 
-    secure: false,    // ❌ Se transmite por HTTP
-    httpOnly: false   // ❌ Accesible por JavaScript
+    secure: true,
+    httpOnly: true,
+    sameSite: 'strict',
+    maxAge: 24 * 60 * 60 * 1000
   }
 }));
 
-// Simular una base de datos (sin usar DB real por ahora)
+// ✅ Rate limiting
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: 'Demasiados intentos de login.'
+});
+
+// Datos de usuarios
 const usuarios = [
   { id: 1, username: 'admin', password: 'admin123', email: 'admin@example.com' },
   { id: 2, username: 'user1', password: 'password1', email: 'user@example.com' }
 ];
 
+let usuarioLogueado = null;
+
+// ✅ Funciones de validación
+function esUsernameValido(username) {
+  return /^[a-zA-Z0-9_]{3,20}$/.test(username);
+}
+
+function esContraseñaValida(password) {
+  return password && password.length >= 6 && password.length <= 100;
+}
+
+function esAdmin() {
+  return usuarioLogueado && usuarioLogueado.username === 'admin';
+}
+
 // ============================================
-// RUTA 1: SQL INJECTION (VULNERABLE)
+// RUTAS SEGURAS
 // ============================================
-app.post('/login', (req, res) => {
+
+app.post('/login', loginLimiter, (req, res) => {
   const username = req.body.username;
   const password = req.body.password;
-
-  // ❌ VULNERABLE: Búsqueda simple (simulando SQL vulnerable)
-  // En una DB real, sería: "SELECT * FROM users WHERE username = '" + username + "' AND password = '" + password + "'"
   
-  // Búsqueda vulnerable a inyección
+  // ✅ Validar entrada
+  if (!esUsernameValido(username) || !esContraseñaValida(password)) {
+    return res.status(400).send('<h1>Datos inválidos</h1>');
+  }
+  
   const usuario = usuarios.find(u => 
     u.username === username && u.password === password
   );
-
+  
   if (usuario) {
-    res.send(`
-      <html>
-        <h1>Login Exitoso</h1>
-        <p>¡Bienvenido ${username}!</p>
-        <p>Email: ${usuario.email}</p>
-      </html>
-    `);
+    usuarioLogueado = usuario;
+    res.send(`<h1>Login Exitoso</h1><p>Bienvenido ${usuario.username}</p>`);
   } else {
     res.send('<h1>Credenciales Inválidas</h1>');
   }
 });
 
-// ============================================
-// RUTA 2: XSS (VULNERABLE)
-// ============================================
 app.get('/profile', (req, res) => {
   const username = req.query.username;
   
-  // ❌ VULNERABLE: Mostrar entrada del usuario sin escapar
+  if (!username) {
+    res.send('<h1>Por favor proporciona un username</h1>');
+    return;
+  }
+  
+  // ✅ Escapar entrada
+  const safeUsername = validator.escape(username);
+  
   res.send(`
     <html>
       <h1>Perfil de Usuario</h1>
-      <p>Username: ${username}</p>
-      <p><a href="/login">Volver al login</a></p>
+      <p>Username: ${safeUsername}</p>
     </html>
   `);
 });
 
-// ============================================
-// RUTA 3: SIN CONTROL DE ACCESO (VULNERABLE)
-// ============================================
 app.get('/admin/users', (req, res) => {
-  // ❌ VULNERABLE: Sin verificar si el usuario es admin
+  // ✅ Validar autenticación
+  if (!usuarioLogueado) {
+    return res.status(401).send('<h1>Error 401: No estás logueado</h1>');
+  }
   
-  // Mostrar todos los usuarios
-  let listaHTML = '<h1>Lista de Usuarios (Admin)</h1><ul>';
+  // ✅ Validar autorización
+  if (!esAdmin()) {
+    return res.status(403).send('<h1>Error 403: Acceso denegado</h1>');
+  }
   
+  let listaHTML = '<h1>Lista de Usuarios</h1><ul>';
   usuarios.forEach(u => {
-    listaHTML += `<li>${u.username} - ${u.email} - ${u.password}</li>`;
+    listaHTML += `<li>${u.username} - ${u.email}</li>`;  // ✅ Sin contraseñas
   });
-  
   listaHTML += '</ul>';
   
   res.send(listaHTML);
 });
 
-// ============================================
-// RUTA 4: EXPOSICIÓN DE ERRORES (VULNERABLE)
-// ============================================
 app.get('/api/data', (req, res) => {
   try {
     const datos = JSON.parse(req.query.data || '{}');
     res.json(datos);
   } catch (err) {
-    // ❌ VULNERABLE: Exposer el error completo
-    res.status(500).json({
-      error: err.message,
-      stack: err.stack  // ❌ Información sensible
+    // ✅ Sin exponer detalles técnicos
+    console.error('Error:', err);
+    
+    res.status(400).json({
+      success: false,
+      message: 'Error en los datos proporcionados.'
     });
   }
-});
-
-// ============================================
-// RUTA 5: LOGIN CON SESIÓN INSEGURA
-// ============================================
-app.post('/login-seguro', (req, res) => {
-  const username = req.body.username;
-  const password = req.body.password;
-
-  const usuario = usuarios.find(u => 
-    u.username === username && u.password === password
-  );
-
-  if (usuario) {
-    // ❌ VULNERABLE: Guardando sesión sin protección
-    req.session.userId = usuario.id;
-    req.session.username = usuario.username;
-    
-    res.send(`
-      <html>
-        <h1>Login Exitoso</h1>
-        <p>¡Bienvenido ${usuario.username}!</p>
-        <p><a href="/dashboard">Ir al Dashboard</a></p>
-      </html>
-    `);
-  } else {
-    res.send('<h1>Credenciales Inválidas</h1>');
-  }
-});
-
-app.get('/dashboard', (req, res) => {
-  if (!req.session.userId) {
-    res.send('<h1>No estás logueado</h1>');
-    return;
-  }
-  
-  res.send(`
-    <html>
-      <h1>Dashboard</h1>
-      <p>Bienvenido ${req.session.username}</p>
-      <p>Tu ID: ${req.session.userId}</p>
-    </html>
-  `);
 });
 
 // Iniciar servidor
 const PORT = 3000;
 app.listen(PORT, () => {
-  console.log(`Servidor ejecutándose en http://localhost:${PORT}`);
+  console.log(`Servidor seguro en http://localhost:${PORT}`);
 });
