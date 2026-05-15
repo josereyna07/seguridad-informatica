@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Prueba de Login Vulnerable</title>
+</head>
+<body>
+    <h1>Formulario de Login Vulnerable</h1>
+    
+    <form action="http://localhost:3000/login" method="POST">
+        <label>Usuario:</label>
+        <input type="text" name="username" placeholder="Ingresa username">
+        <br><br>
+        
+        <label>Contraseña:</label>
+        <input type="password" name="password" placeholder="Ingresa contraseña">
+        <br><br>
+        
+        <button type="submit">Login</button>
+    </form>
+
+    <h2>Prueba esto:</h2>
+    <ul>
+        <li><strong>Usuario:</strong> admin</li>
+        <li><strong>Contraseña:</strong> admin123</li>
+    </ul>
+</body>
+</html>
